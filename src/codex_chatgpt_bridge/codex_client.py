@@ -15,8 +15,8 @@ from .models import CodexTurn
 _RUNTIME_INSTRUCTIONS = """\
 Do not request command approval or sandbox escalation.
 Keep temporary files, test caches, and generated artifacts inside the provided working directory.
-If a command cannot run within the configured sandbox, report the blocked command instead of retrying
-outside the sandbox.
+If a command cannot run within the configured sandbox, report the blocked command instead of
+retrying outside the sandbox.
 """
 
 
