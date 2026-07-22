@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 from contextlib import AsyncExitStack
+from datetime import timedelta
 from typing import Protocol
 
 from mcp import ClientSession, StdioServerParameters
@@ -91,7 +92,13 @@ class CodexMCPClient:
                     stdio_client(parameters)
                 )
                 session = await stack.enter_async_context(
-                    ClientSession(read_stream, write_stream)
+                    ClientSession(
+                        read_stream,
+                        write_stream,
+                        read_timeout_seconds=timedelta(
+                            seconds=self.settings.codex_timeout_seconds
+                        ),
+                    )
                 )
                 await session.initialize()
                 tools = await session.list_tools()

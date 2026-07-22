@@ -24,6 +24,7 @@ class Settings(BaseSettings):
 
     codex_command: str = "codex"
     codex_args: str = "mcp-server"
+    codex_timeout_seconds: int = Field(default=21_600, ge=60, le=86_400)
     allowed_roots: tuple[Path, ...] = Field(default_factory=lambda: (Path.cwd(),))
     memory_path: Path = Path(".bridge/memory.jsonl")
     sessions_path: Path = Path(".bridge/sessions.json")

@@ -52,6 +52,7 @@ The JSONL backend is intentionally replaceable. A later adapter can point the sa
 - Python 3.11+
 - Codex CLI installed and authenticated
 - `codex` available on `PATH`
+- MCP Python SDK 1.27.x (`<2` is pinned until the v2 migration)
 - Git repositories located under explicitly allowed roots
 
 Codex exposes `codex` for starting a thread and `codex-reply` for continuing it. This bridge uses those tools instead of parsing terminal output.
@@ -86,6 +87,7 @@ Windows example:
 
 ```dotenv
 BRIDGE_ALLOWED_ROOTS=["C:\\Users\\bolthold\\Documents\\Code"]
+BRIDGE_CODEX_TIMEOUT_SECONDS=21600
 ```
 
 ## Run over stdio
