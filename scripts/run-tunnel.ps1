@@ -4,6 +4,8 @@ param(
 
     [string]$TunnelClient = "$env:USERPROFILE\Downloads\tunnel-client.exe",
 
+    [string]$HealthListenAddr = '127.0.0.1:8081',
+
     [switch]$SkipDoctor
 )
 
@@ -32,8 +34,13 @@ if ($null -eq (Get-Command codex -ErrorAction SilentlyContinue)) {
     throw 'Codex CLI is not available on PATH.'
 }
 
+$previousHealthListenAddr = $env:HEALTH_LISTEN_ADDR
+$env:HEALTH_LISTEN_ADDR = $HealthListenAddr
+
 Push-Location $repoRoot
 try {
+    Write-Host "Using tunnel health/UI listener: $HealthListenAddr"
+
     if (-not $SkipDoctor) {
         & $TunnelClient doctor --profile $Profile --explain
         if ($LASTEXITCODE -ne 0) {
@@ -49,4 +56,5 @@ try {
 }
 finally {
     Pop-Location
+    $env:HEALTH_LISTEN_ADDR = $previousHealthListenAddr
 }
