@@ -1,16 +1,24 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from contextlib import AsyncExitStack
 from datetime import timedelta
 from typing import Protocol
 
-from mcp import ClientSession, StdioServerParameters
+from mcp import StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+from .codex_events import (
+    CodexClientSession,
+    CodexEventNotification,
+    normalize_codex_event,
+)
 from .config import ApprovalPolicy, SandboxMode, Settings
-from .models import CodexTurn
+from .models import CodexEvent, CodexTurn
+
+logger = logging.getLogger(__name__)
 
 
 class CodexClient(Protocol):
@@ -36,9 +44,10 @@ class CodexMCPClient:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self._stack: AsyncExitStack | None = None
-        self._session: ClientSession | None = None
+        self._session: CodexClientSession | None = None
         self._start_lock = asyncio.Lock()
         self._call_lock = asyncio.Lock()
+        self._active_events: list[CodexEvent] | None = None
 
     async def start_turn(
         self,
@@ -72,8 +81,9 @@ class CodexMCPClient:
             await self._stack.aclose()
         self._stack = None
         self._session = None
+        self._active_events = None
 
-    async def _ensure_started(self) -> ClientSession:
+    async def _ensure_started(self) -> CodexClientSession:
         if self._session is not None:
             return self._session
 
@@ -92,12 +102,13 @@ class CodexMCPClient:
                     stdio_client(parameters)
                 )
                 session = await stack.enter_async_context(
-                    ClientSession(
+                    CodexClientSession(
                         read_stream,
                         write_stream,
                         read_timeout_seconds=timedelta(
                             seconds=self.settings.codex_timeout_seconds
                         ),
+                        codex_event_handler=self._handle_codex_event,
                     )
                 )
                 await session.initialize()
@@ -115,10 +126,33 @@ class CodexMCPClient:
             self._session = session
             return session
 
+    async def _handle_codex_event(
+        self,
+        notification: CodexEventNotification,
+    ) -> None:
+        event = normalize_codex_event(
+            notification,
+            max_text_chars=self.settings.max_event_text_chars,
+        )
+        if self._active_events is not None:
+            self._active_events.append(event)
+        logger.info(
+            "codex_event type=%s thread=%s turn=%s status=%s",
+            event.event_type,
+            event.thread_id or "-",
+            event.turn_id or "-",
+            event.status or "-",
+        )
+
     async def _call(self, name: str, arguments: dict[str, object]) -> CodexTurn:
         session = await self._ensure_started()
         async with self._call_lock:
-            result = await session.call_tool(name, arguments)
+            self._active_events = []
+            try:
+                result = await session.call_tool(name, arguments)
+                events = list(self._active_events)
+            finally:
+                self._active_events = None
 
         payload = result.model_dump(mode="json", by_alias=True, exclude_none=True)
         structured = payload.get("structuredContent") or payload.get("structured_content") or {}
@@ -144,4 +178,13 @@ class CodexMCPClient:
         if not isinstance(content, str):
             content = str(content or "")
 
-        return CodexTurn(thread_id=thread_id, content=content, raw=payload)
+        compact_raw: dict[str, object] = {
+            "is_error": bool(payload.get("isError", False)),
+            "structured_content": structured,
+        }
+        return CodexTurn(
+            thread_id=thread_id,
+            content=content,
+            events=events,
+            raw=compact_raw,
+        )
