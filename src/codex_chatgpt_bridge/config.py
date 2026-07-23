@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     default_sandbox: SandboxMode = "workspace-write"
     default_approval_policy: ApprovalPolicy = "never"
     max_memory_items: int = Field(default=12, ge=1, le=50)
+    max_memory_context_chars: int = Field(default=12_000, ge=1_000, le=200_000)
+    max_codex_response_chars: int = Field(default=12_000, ge=1_000, le=20_000)
+    max_event_text_chars: int = Field(default=2_000, ge=256, le=20_000)
+    max_session_events: int = Field(default=50, ge=1, le=500)
+    max_session_turns: int = Field(default=20, ge=1, le=200)
 
     @field_validator("allowed_roots", mode="after")
     @classmethod
