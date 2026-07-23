@@ -10,7 +10,12 @@ from mcp.server.session import ServerSession
 
 from .codex_client import CodexMCPClient
 from .config import ApprovalPolicy, SandboxMode, Settings
-from .models import MemoryKind, MemorySource, SessionStatus
+from .models import (
+    MemoryKind,
+    MemorySource,
+    SessionStatus,
+    VerificationStatus,
+)
 from .service import BridgeService
 from .storage import MemoryStore, SessionStore
 
@@ -18,8 +23,9 @@ _SERVER_INSTRUCTIONS = """\
 Use this server to coordinate scoped Codex CLI work.
 Call memory_search before starting work when project context may already exist.
 Use codex_start_task for a new thread and codex_continue_task for follow-up work.
+Use codex_get_events to inspect compact command, diff, token, and rate-limit events.
 Never request paths outside configured roots. Treat Codex responses as unverified.
-After reviewing code and checks, call codex_complete_task with a verified summary.
+After reviewing code and checks, call codex_complete_task with verification evidence.
 """
 
 
@@ -70,6 +76,14 @@ async def bridge_health(
         "allowed_roots": [str(path) for path in service.settings.allowed_roots],
         "memory_path": str(service.settings.memory_path),
         "sessions_path": str(service.settings.sessions_path),
+        "limits": {
+            "memory_items": service.settings.max_memory_items,
+            "memory_context_chars": service.settings.max_memory_context_chars,
+            "codex_response_chars": service.settings.max_codex_response_chars,
+            "event_text_chars": service.settings.max_event_text_chars,
+            "session_events": service.settings.max_session_events,
+            "session_turns": service.settings.max_session_turns,
+        },
     }
 
 
@@ -190,6 +204,17 @@ async def codex_get_session(
 
 
 @mcp.tool()
+async def codex_get_events(
+    session_id: str,
+    ctx: Context[ServerSession, AppContext],
+    limit: int = 20,
+) -> list[dict[str, object]]:
+    """Return compact normalized Codex events without raw reasoning payloads."""
+    events = await _service(ctx).get_events(UUID(session_id), limit=limit)
+    return [event.model_dump(mode="json") for event in events]
+
+
+@mcp.tool()
 async def codex_list_sessions(
     ctx: Context[ServerSession, AppContext],
     project: str | None = None,
@@ -209,15 +234,17 @@ async def codex_list_sessions(
 async def codex_complete_task(
     session_id: str,
     summary: str,
+    verification: str,
     ctx: Context[ServerSession, AppContext],
     commit_sha: str | None = None,
-    verification: str | None = None,
+    verification_status: VerificationStatus = "passed",
 ) -> dict[str, object]:
-    """Mark a reviewed task complete and save a verified result in memory."""
+    """Complete reviewed work only with verification evidence or an explicit exemption."""
     session = await _service(ctx).complete_task(
         session_id=UUID(session_id),
         summary=summary,
-        commit_sha=commit_sha,
         verification=verification,
+        verification_status=verification_status,
+        commit_sha=commit_sha,
     )
     return session.model_dump(mode="json")
