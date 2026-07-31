@@ -8,6 +8,7 @@ from .config import ApprovalPolicy, SandboxMode, Settings
 from .models import (
     BridgeSession,
     CodexEvent,
+    MemoryHit,
     MemoryKind,
     MemoryRecord,
     MemorySource,
@@ -43,6 +44,23 @@ class BridgeService:
         self.codex = codex
         self.memory = memory
         self.sessions = sessions
+
+    async def search_memory(
+        self,
+        *,
+        project: str,
+        query: str = "",
+        limit: int = 10,
+        kind: MemoryKind | None = None,
+        verified_only: bool = False,
+    ) -> list[MemoryHit]:
+        return await self.memory.search(
+            project=project,
+            query=query,
+            limit=limit,
+            kind=kind,
+            verified_only=verified_only,
+        )
 
     async def start_task(
         self,
