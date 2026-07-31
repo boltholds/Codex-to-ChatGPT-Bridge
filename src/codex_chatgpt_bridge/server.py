@@ -45,6 +45,11 @@ async def lifespan(_: FastMCP) -> AsyncIterator[AppContext]:
         memory=MemoryStore(settings.memory_path),
         sessions=SessionStore(settings.sessions_path),
     )
+
+    # The MCP SDK uses AnyIO cancel scopes inside its stdio context managers. They must
+    # be entered and exited by the same task, so the lifespan task owns the nested Codex
+    # process for the complete lifetime of this bridge process.
+    await codex.start()
     try:
         yield AppContext(service=service, codex=codex)
     finally:
@@ -67,10 +72,12 @@ def _service(ctx: Context[ServerSession, AppContext]) -> BridgeService:
 async def bridge_health(
     ctx: Context[ServerSession, AppContext],
 ) -> dict[str, object]:
-    """Return bridge configuration without starting Codex or exposing secrets."""
+    """Return bridge configuration after the nested Codex MCP server is ready."""
     service = _service(ctx)
     return {
         "status": "ok",
+        "codex_mcp": "ready",
+        "event_adapter": "codex-event-v1",
         "codex_command": service.settings.codex_command,
         "codex_args": service.settings.codex_argv,
         "allowed_roots": [str(path) for path in service.settings.allowed_roots],
