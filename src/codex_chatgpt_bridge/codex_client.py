@@ -22,6 +22,8 @@ logger = logging.getLogger(__name__)
 
 
 class CodexClient(Protocol):
+    async def start(self) -> None: ...
+
     async def start_turn(
         self,
         *,
@@ -39,7 +41,12 @@ class CodexClient(Protocol):
 
 
 class CodexMCPClient:
-    """Long-lived MCP client for the official `codex mcp-server` process."""
+    """Long-lived MCP client for the official `codex mcp-server` process.
+
+    The MCP stdio contexts are task-affine because the SDK uses AnyIO cancel scopes.
+    `start()` and `close()` must therefore be called by the same owner task. The FastMCP
+    lifespan owns that task; request handlers only call the already-started session.
+    """
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -48,6 +55,11 @@ class CodexMCPClient:
         self._start_lock = asyncio.Lock()
         self._call_lock = asyncio.Lock()
         self._active_events: list[CodexEvent] | None = None
+        self._suppressed_event_counts: dict[str, int] | None = None
+
+    async def start(self) -> None:
+        """Start and validate the nested Codex MCP server in the owner task."""
+        await self._ensure_started()
 
     async def start_turn(
         self,
@@ -77,11 +89,13 @@ class CodexMCPClient:
         )
 
     async def close(self) -> None:
-        if self._stack is not None:
-            await self._stack.aclose()
+        stack = self._stack
         self._stack = None
         self._session = None
         self._active_events = None
+        self._suppressed_event_counts = None
+        if stack is not None:
+            await stack.aclose()
 
     async def _ensure_started(self) -> CodexClientSession:
         if self._session is not None:
@@ -134,6 +148,22 @@ class CodexMCPClient:
             notification,
             max_text_chars=self.settings.max_event_text_chars,
         )
+
+        # Token-by-token deltas are useful for an interactive UI, but storing and logging
+        # each one makes a normal response produce hundreds of duplicate lines. The final
+        # agent_message/item_completed events retain the useful content.
+        if event.event_type.endswith("_delta"):
+            if self._suppressed_event_counts is not None:
+                count = self._suppressed_event_counts.get(event.event_type, 0)
+                self._suppressed_event_counts[event.event_type] = count + 1
+            logger.debug(
+                "codex_stream_delta type=%s thread=%s turn=%s",
+                event.event_type,
+                event.thread_id or "-",
+                event.turn_id or "-",
+            )
+            return
+
         if self._active_events is not None:
             self._active_events.append(event)
         logger.info(
@@ -148,11 +178,26 @@ class CodexMCPClient:
         session = await self._ensure_started()
         async with self._call_lock:
             self._active_events = []
+            self._suppressed_event_counts = {}
             try:
                 result = await session.call_tool(name, arguments)
                 events = list(self._active_events)
+                suppressed_counts = dict(self._suppressed_event_counts)
             finally:
                 self._active_events = None
+                self._suppressed_event_counts = None
+
+        if suppressed_counts:
+            events.insert(
+                0,
+                CodexEvent(
+                    event_type="stream_deltas_suppressed",
+                    details={
+                        "counts": dict(sorted(suppressed_counts.items())),
+                        "total": sum(suppressed_counts.values()),
+                    },
+                ),
+            )
 
         payload = result.model_dump(mode="json", by_alias=True, exclude_none=True)
         structured = payload.get("structuredContent") or payload.get("structured_content") or {}
