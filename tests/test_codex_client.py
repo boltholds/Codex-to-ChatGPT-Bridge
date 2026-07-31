@@ -1,5 +1,6 @@
 import asyncio
 
+import anyio
 import pytest
 
 from codex_chatgpt_bridge import server
@@ -82,3 +83,38 @@ async def test_stream_deltas_are_counted_but_not_stored(tmp_path) -> None:
 
     assert client._suppressed_event_counts == {"agent_message_content_delta": 2}
     assert [event.event_type for event in client._active_events] == ["task_complete"]
+
+
+@pytest.mark.asyncio
+async def test_close_ignores_expected_closed_stdio_group(tmp_path) -> None:
+    settings = Settings(_env_file=None, allowed_roots=(tmp_path,))
+    client = CodexMCPClient(settings)
+
+    class ClosedStack:
+        async def aclose(self) -> None:
+            raise BaseExceptionGroup(
+                "stdio already closed",
+                [anyio.BrokenResourceError()],
+            )
+
+    client._stack = ClosedStack()  # type: ignore[assignment]
+
+    await client.close()
+
+    assert client._stack is None
+    assert client._session is None
+
+
+@pytest.mark.asyncio
+async def test_close_reraises_unexpected_shutdown_error(tmp_path) -> None:
+    settings = Settings(_env_file=None, allowed_roots=(tmp_path,))
+    client = CodexMCPClient(settings)
+
+    class FailingStack:
+        async def aclose(self) -> None:
+            raise ExceptionGroup("unexpected shutdown", [RuntimeError("boom")])
+
+    client._stack = FailingStack()  # type: ignore[assignment]
+
+    with pytest.raises(ExceptionGroup, match="unexpected shutdown"):
+        await client.close()
