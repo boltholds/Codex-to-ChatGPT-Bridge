@@ -6,7 +6,15 @@ param(
 
     [string]$HealthListenAddr = '127.0.0.1:8081',
 
-    [switch]$SkipDoctor
+    [switch]$SkipDoctor,
+
+    [switch]$NoAutoRestart,
+
+    [ValidateRange(1, 300)]
+    [int]$RestartDelaySeconds = 3,
+
+    [ValidateRange(0, 1000)]
+    [int]$MaxRestartAttempts = 0
 )
 
 $ErrorActionPreference = 'Stop'
@@ -48,10 +56,34 @@ try {
         }
     }
 
-    Write-Host "Starting Secure MCP Tunnel profile '$Profile'. Keep this window open."
-    & $TunnelClient run --profile $Profile
-    if ($LASTEXITCODE -ne 0) {
-        throw "tunnel-client run failed with exit code $LASTEXITCODE."
+    $restartAttempt = 0
+    while ($true) {
+        Write-Host "Starting Secure MCP Tunnel profile '$Profile'. Keep this window open."
+        & $TunnelClient run --profile $Profile
+        $runExitCode = $LASTEXITCODE
+
+        if ($runExitCode -eq 0) {
+            Write-Host "tunnel-client stopped cleanly."
+            break
+        }
+
+        if ($NoAutoRestart) {
+            throw "tunnel-client run failed with exit code $runExitCode."
+        }
+
+        $restartAttempt += 1
+        if ($MaxRestartAttempts -gt 0 -and $restartAttempt -gt $MaxRestartAttempts) {
+            throw (
+                "tunnel-client run failed with exit code $runExitCode and exceeded " +
+                "$MaxRestartAttempts restart attempts."
+            )
+        }
+
+        Write-Warning (
+            "tunnel-client exited with code $runExitCode. Restarting profile '$Profile' " +
+            "in $RestartDelaySeconds seconds (attempt $restartAttempt)."
+        )
+        Start-Sleep -Seconds $RestartDelaySeconds
     }
 }
 finally {
