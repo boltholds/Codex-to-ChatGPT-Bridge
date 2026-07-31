@@ -7,6 +7,7 @@ from contextlib import AsyncExitStack
 from datetime import timedelta
 from typing import Protocol
 
+import anyio
 from mcp import StdioServerParameters
 from mcp.client.stdio import stdio_client
 
@@ -19,6 +20,13 @@ from .config import ApprovalPolicy, SandboxMode, Settings
 from .models import CodexEvent, CodexTurn
 
 logger = logging.getLogger(__name__)
+
+_EXPECTED_STDIO_SHUTDOWN_ERRORS = (
+    anyio.BrokenResourceError,
+    anyio.ClosedResourceError,
+    anyio.EndOfStream,
+    BrokenPipeError,
+)
 
 
 class CodexClient(Protocol):
@@ -94,8 +102,19 @@ class CodexMCPClient:
         self._session = None
         self._active_events = None
         self._suppressed_event_counts = None
-        if stack is not None:
+        if stack is None:
+            return
+
+        try:
             await stack.aclose()
+        except BaseException as exc:
+            if _is_expected_stdio_shutdown_error(exc):
+                logger.info(
+                    "codex_stdio_already_closed_during_shutdown error=%s",
+                    type(exc).__name__,
+                )
+                return
+            raise
 
     async def _ensure_started(self) -> CodexClientSession:
         if self._session is not None:
@@ -233,3 +252,12 @@ class CodexMCPClient:
             events=events,
             raw=compact_raw,
         )
+
+
+def _is_expected_stdio_shutdown_error(exc: BaseException) -> bool:
+    """Return true only when every leaf is an expected closed-pipe condition."""
+    if isinstance(exc, BaseExceptionGroup):
+        return bool(exc.exceptions) and all(
+            _is_expected_stdio_shutdown_error(child) for child in exc.exceptions
+        )
+    return isinstance(exc, _EXPECTED_STDIO_SHUTDOWN_ERRORS)
