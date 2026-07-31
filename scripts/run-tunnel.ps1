@@ -4,7 +4,7 @@ param(
 
     [string]$TunnelClient = "$env:USERPROFILE\Downloads\tunnel-client.exe",
 
-    [string]$HealthListenAddr = '127.0.0.1:8081',
+    [string]$HealthListenAddr = '127.0.0.1:8089',
 
     [switch]$SkipDoctor,
 
