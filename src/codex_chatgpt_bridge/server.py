@@ -138,7 +138,7 @@ async def memory_search(
     verified_only: bool = False,
 ) -> list[dict[str, object]]:
     """Search durable project memory using deterministic lexical retrieval."""
-    hits = await _service(ctx).memory.search(
+    hits = await _service(ctx).search_memory(
         project=project,
         query=query,
         limit=max(1, min(limit, 50)),
