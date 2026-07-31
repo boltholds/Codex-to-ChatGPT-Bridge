@@ -6,6 +6,12 @@ param(
 
     [string]$HealthListenAddr = '127.0.0.1:8089',
 
+    [ValidatePattern('^[0-9]+(?:ns|us|ms|s|m|h)$')]
+    [string]$McpConnectionMaxTtl = '6h',
+
+    [ValidateRange(1, 1000)]
+    [int]$McpMaxConcurrentRequests = 1,
+
     [switch]$SkipDoctor,
 
     [switch]$NoAutoRestart,
@@ -43,11 +49,18 @@ if ($null -eq (Get-Command codex -ErrorAction SilentlyContinue)) {
 }
 
 $previousHealthListenAddr = $env:HEALTH_LISTEN_ADDR
+$previousMcpConnectionMaxTtl = $env:MCP_CONNECTION_MAX_TTL
+$previousMcpMaxConcurrentRequests = $env:MCP_MAX_CONCURRENT_REQUESTS
+
 $env:HEALTH_LISTEN_ADDR = $HealthListenAddr
+$env:MCP_CONNECTION_MAX_TTL = $McpConnectionMaxTtl
+$env:MCP_MAX_CONCURRENT_REQUESTS = [string]$McpMaxConcurrentRequests
 
 Push-Location $repoRoot
 try {
     Write-Host "Using tunnel health/UI listener: $HealthListenAddr"
+    Write-Host "Using MCP connection TTL: $McpConnectionMaxTtl"
+    Write-Host "Using MCP max concurrent requests: $McpMaxConcurrentRequests"
 
     if (-not $SkipDoctor) {
         & $TunnelClient doctor --profile $Profile --explain
@@ -62,19 +75,18 @@ try {
         & $TunnelClient run --profile $Profile
         $runExitCode = $LASTEXITCODE
 
-        if ($runExitCode -eq 0) {
-            Write-Host "tunnel-client stopped cleanly."
-            break
-        }
-
         if ($NoAutoRestart) {
+            if ($runExitCode -eq 0) {
+                Write-Host "tunnel-client stopped cleanly."
+                break
+            }
             throw "tunnel-client run failed with exit code $runExitCode."
         }
 
         $restartAttempt += 1
         if ($MaxRestartAttempts -gt 0 -and $restartAttempt -gt $MaxRestartAttempts) {
             throw (
-                "tunnel-client run failed with exit code $runExitCode and exceeded " +
+                "tunnel-client exited with code $runExitCode and exceeded " +
                 "$MaxRestartAttempts restart attempts."
             )
         }
@@ -89,4 +101,6 @@ try {
 finally {
     Pop-Location
     $env:HEALTH_LISTEN_ADDR = $previousHealthListenAddr
+    $env:MCP_CONNECTION_MAX_TTL = $previousMcpConnectionMaxTtl
+    $env:MCP_MAX_CONCURRENT_REQUESTS = $previousMcpMaxConcurrentRequests
 }
